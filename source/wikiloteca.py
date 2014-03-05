@@ -1,5 +1,5 @@
+import lxml.etree
 import lxml.html
-import lxml.xml
 
 def process_article():
 
@@ -17,15 +17,20 @@ def process_article():
 	#get and prepare the links and text from wikipedia
 	#=============================================================
 
+	#text
 	htmltree = lxml.html.parse(url_root + article_name)
 
-	paragraphs = htmltree.xpath('//p')
+	paragraphs = htmltree.xpath("//p")
 	content = [p.text_content() for p in paragraphs]
 
-	
-	linkstree = lxml.xml.parse(links_root + article_name)
 
-	links = linkstree.xpath('//pl'
+	#links
+	linkstree = lxml.etree.parse(links_root + article_name)
+	
+	linknodes = linkstree.xpath("//pl[@ns='0']")
+	links = [l.text for l in linknodes]
+	for title in links:
+		print title
 
 
 	#add links to the queue if they haven't been processed already
