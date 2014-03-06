@@ -1,53 +1,75 @@
 import lxml.etree
 import lxml.html
+from collections import deque
 
-def process_article():
-
-	#get an article from the queue
-	#=============================================================
+#returns the next article that should be processed
+#=====================
+def choose_article():
 	#eventually use Amazon SQS
+	return titles_queue.pop()
 
-	url_root = "http://en.wikipedia.org/wiki/"
-	links_root = "http://en.wikipedia.org/w/api.php?action=parse&format=xml&prop=links&page="
 
-	article_name = "Boat"
+#get the data from online and prepare it for later processing
+#========================
+def process_article(article_name):
 
+	print article_name
+
+	URL_ROOT = "http://en.wikipedia.org/wiki/"
+	LINKS_ROOT= "http://en.wikipedia.org/w/api.php?action=parse&format=xml&prop=links&page="
 
 
 	#get and prepare the links and text from wikipedia
-	#=============================================================
+	#====================================
 
 	#text
-	htmltree = lxml.html.parse(url_root + article_name)
+	html_tree = lxml.html.parse(URL_ROOT + article_name)
 
-	paragraphs = htmltree.xpath("//p")
-	content = [p.text_content() for p in paragraphs]
+	paragraph_tags = html_tree.xpath("//p")
+	paragraphs = [p.text_content() for p in paragraph_tags]
+
+	content = ""
+	for p in paragraphs:
+		content += (p + "\n\n")
 
 
 	#links
-	linkstree = lxml.etree.parse(links_root + article_name)
+	links_tree = lxml.etree.parse(LINKS_ROOT + article_name)
 	
-	linknodes = linkstree.xpath("//pl[@ns='0']")
-	links = [l.text for l in linknodes]
+	link_nodes = links_tree.xpath("//pl[@ns='0' and @exists='']")
+	links = [l.text for l in link_nodes]
+
+
+
+	#add links to the queue if they haven't been seen before
+	#============================================
+
 	for title in links:
-		print title
+		if (not status.has_key(title)):
+			titles_queue.append(title)
+			status[title] = 0
+
+	
+	status[article_name] = 1
 
 
-	#add links to the queue if they haven't been processed already
-	#=============================================================
+#determine text difficulty
+#==================
+def determine_difficulty(text):
+	print "text"
 
 
 
-
-	#determine text difficulty
-	#=============================================================
-
+def update_database():
+	print "asdf"
 
 
-	#add text to the database
-	#=============================================================
-	for p in content:
-		print p
 
+status = dict(Boat = 0)
+titles_queue  = deque(["Boat"])
 
-process_article()
+articles_processed = 0
+while (articles_processed < 30):
+	article = choose_article()
+	process_article(article)
+	articles_processed += 1
