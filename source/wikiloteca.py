@@ -6,6 +6,8 @@ from boto.sqs.message import Message
 
 import lxml.etree
 import lxml.html
+
+import urllib
 from collections import deque
 import datetime
 
@@ -20,7 +22,7 @@ def init(language, seed_list):
 	for seed in seed_list:
 		status[seed] = 0
 		message = Message()
-		message.set_body(seed)
+		message.set_body(seed.encode('utf-8'))
 		q.write(message)
 
 	global URL_ROOT
@@ -49,7 +51,7 @@ def choose_article():
 	message = q.read()
 	if message is not None:
 		print "choosing article: " + message.get_body()
-		return message.get_body()
+		return (message.get_body()).decode('utf-8')
 	else:
 		print "No message"
 		return "Boat"
@@ -86,7 +88,7 @@ def process_links(article_title):
 		if (not status.has_key(title)):
 			status[title] = 0
 			message = Message()
-			message.set_body(title)
+			message.set_body(title.encode('utf-8'))
 			q.write(message)
 			print "adding article to queue: " + title
 
@@ -132,14 +134,13 @@ status = dict()
 archive = dict()
 last_archive_time = datetime.datetime.now()
 
-
-sqs = boto.sqs.connect_to_region("us-west-2")
+sqs = boto.sqs.connect_to_region("us-east-1")
 q = sqs.create_queue("wikiloteca_queue")
 
 init("english", seed_list)
 
 articles_processed = 0
-while (articles_processed < 5):
+while (articles_processed < 3):
 	article = choose_article()
 	words = process_article(article)
 	process_links(article)
