@@ -1,6 +1,9 @@
 # Nicholas Tyson
 # March 2014
 
+import boto.sqs
+from boto.sqs.message import Message
+
 import lxml.etree
 import lxml.html
 from collections import deque
@@ -13,10 +16,12 @@ import datetime
 #set the language and initial list of article titles
 #===============================
 def init(language, seed_list):
-	#eventually put them in SQS instead
+	print "initializing"
 	for seed in seed_list:
 		status[seed] = 0
-		titles_queue.append(seed)
+		message = Message()
+		message.set_body(seed)
+		q.write(message)
 
 	global URL_ROOT
 	global LINKS_ROOT
@@ -32,11 +37,22 @@ def init(language, seed_list):
 		LINKS_ROOT= "http://en.wikipedia.org/w/api.php?action=parse&format=xml&prop=links&page="
 
 
+#open AWS connections
+#===================================
+def initAWS():
+	print "initializing AWS"
+
+
 #returns the next article that should be processed
 #======================================
 def choose_article():
-	#eventually use Amazon SQS
-	return titles_queue.pop()
+	message = q.read()
+	if message is not None:
+		print "choosing article: " + message.get_body()
+		return message.get_body()
+	else:
+		print "No message"
+		return "Boat"
 
 
 #get the data from online and prepare it for later processing
@@ -44,8 +60,7 @@ def choose_article():
 #returns the article's text
 #=======================================
 def process_article(article_title):
-
-	print article_title
+	print "processing " + article_title
 
 	html_tree = lxml.html.parse(URL_ROOT + article_title)
 	paragraph_tags = html_tree.xpath("//p")
@@ -60,6 +75,7 @@ def process_article(article_title):
 
 #download the list of links in the article and add them to the queue
 def process_links(article_title):
+	print "processing links for " + article_title
 	links_tree = lxml.etree.parse(LINKS_ROOT + article_title)
 	link_nodes = links_tree.xpath("//pl[@ns='0' and @exists='']")
 	links = [l.text for l in link_nodes]
@@ -68,8 +84,11 @@ def process_links(article_title):
 	#============================================
 	for title in links:
 		if (not status.has_key(title)):
-			titles_queue.appendleft(title)
 			status[title] = 0
+			message = Message()
+			message.set_body(title)
+			q.write(message)
+			print "adding article to queue: " + title
 
 	#mark the article as processed
 	status[article_title] = 1
@@ -83,7 +102,7 @@ def determine_difficulty(text):
 
 
 #save an article to a local file for eventual upload to S3
-#==============================
+#======================================
 def update_archive(article_title, content):
 	archive[article_title] = content
 
@@ -94,6 +113,11 @@ def upload_archive():
 	print "uploading to S3"
 
 
+#close AWS connections and stuff
+#==============================
+def closeAWS():
+	print "closing AWS connections"
+
 
 ############################################################################
 # Script
@@ -103,15 +127,19 @@ def upload_archive():
 seed_list = ["Boat"]
 URL_ROOT = ""
 LINKS_ROOT = ""
-titles_queue = deque()
+
 status = dict()
 archive = dict()
 last_archive_time = datetime.datetime.now()
 
+
+sqs = boto.sqs.connect_to_region("us-west-2")
+q = sqs.create_queue("wikiloteca_queue")
+
 init("english", seed_list)
 
 articles_processed = 0
-while (articles_processed < 30):
+while (articles_processed < 5):
 	article = choose_article()
 	words = process_article(article)
 	process_links(article)
