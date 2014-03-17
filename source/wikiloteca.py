@@ -3,11 +3,13 @@
 
 import boto.sqs
 from boto.sqs.message import Message
+from boto.s3.connection import S3Connection
+from boto.s3.key import Key
 
 import lxml.etree
 import lxml.html
 
-import urllib
+import json
 from collections import deque
 import datetime
 
@@ -40,7 +42,7 @@ def init(language, seed_list):
 
 
 #open AWS connections
-#===================================
+#=====================================
 def initAWS():
 	print "initializing AWS"
 
@@ -76,6 +78,7 @@ def process_article(article_title):
 
 
 #download the list of links in the article and add them to the queue
+#============================================
 def process_links(article_title):
 	print "processing links for " + article_title
 	links_tree = lxml.etree.parse(LINKS_ROOT + article_title)
@@ -83,7 +86,6 @@ def process_links(article_title):
 	links = [l.text for l in link_nodes]
 
 	#add links to the queue if they haven't been seen before
-	#============================================
 	for title in links:
 		if (not status.has_key(title)):
 			status[title] = 0
@@ -97,7 +99,7 @@ def process_links(article_title):
 
 
 #determine text difficulty
-#=============================
+#======================================
 def determine_difficulty(text):
 	print "determining difficulty"
 	return 0
@@ -110,13 +112,18 @@ def update_archive(article_title, content):
 
 
 #upload the article texts to S3
-#=============================
+#======================================
 def upload_archive():
 	print "uploading to S3"
+	archive_string = json.dumps(archive)
+	k = Key(bucket)
+	k.key = str(datetime.datetime.now())
+	k.set_contents_from_string(archive_string)
+	archive.clear()
 
 
 #close AWS connections and stuff
-#==============================
+#======================================
 def closeAWS():
 	print "closing AWS connections"
 
@@ -135,7 +142,11 @@ archive = dict()
 last_archive_time = datetime.datetime.now()
 
 sqs = boto.sqs.connect_to_region("us-east-1")
+#returns the existing queue if one exists already
 q = sqs.create_queue("wikiloteca_queue")
+
+s3 = S3Connection()
+bucket = s3.get_bucket("nickgtyson.wikiloteca")
 
 init("english", seed_list)
 
@@ -151,7 +162,7 @@ while (articles_processed < 3):
 	#see if it has been long enough to backup data to S3
 	current_time = datetime.datetime.now()
 	time_since_backup = current_time - last_archive_time
-	if (time_since_backup.seconds >= 3600):
+	if (time_since_backup.seconds >= 120):
 		upload_archive()
 		last_archive_time = current_time
 	
