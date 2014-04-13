@@ -5,6 +5,7 @@ import boto.sqs
 from boto.sqs.message import Message
 from boto.s3.connection import S3Connection
 from boto.s3.key import Key
+from boto.dynamodb2.table import Table
 
 import lxml.etree
 import lxml.html
@@ -17,15 +18,28 @@ import datetime
 # Functions
 ##########################################################################
 
+#add a new unprocessed article title to the database and queue
+#check that the title hasn't been added already BEFORE calling this
+#========================================
+def add_new_title(title):
+	add_time = str(datetime.datetime.now())
+	database.put_item(data={
+		'title': title,
+		'status': 'queued',
+		'difficulty': 0,
+		'time': add_time,
+	})
+	message = Message()
+	message.set_body(title.encode('utf-8'))
+	q.write(message)
+
+
 #set the language and initial list of article titles
 #===============================
 def init(language, seed_list):
 	print "initializing"
 	for seed in seed_list:
-		status[seed] = 0
-		message = Message()
-		message.set_body(seed.encode('utf-8'))
-		q.write(message)
+		add_new_title(seed)
 
 	global URL_ROOT
 	global LINKS_ROOT
@@ -86,16 +100,10 @@ def process_links(article_title):
 	links = [l.text for l in link_nodes]
 
 	#add links to the queue if they haven't been seen before
-	for title in links:
-		if (not status.has_key(title)):
-			status[title] = 0
-			message = Message()
-			message.set_body(title.encode('utf-8'))
-			q.write(message)
-			print "adding article to queue: " + title
-
-	#mark the article as processed
-	status[article_title] = 1
+	for t in links:
+		if (not database.has_item(title=t, consistent=True)):
+			add_new_title(t)
+			print "adding article to queue: " + t
 
 
 #determine text difficulty
@@ -103,6 +111,16 @@ def process_links(article_title):
 def determine_difficulty(text):
 	print "determining difficulty"
 	return 0
+
+
+#add the article's difficulty to the database and mark it as done
+#===========================================
+def update_processed_article_in_database(article_title, difficulty):
+	#mark the article as processed
+	article_data = database.get_item(title=article_title, consistent=True)
+	article_data['status'] = 'done'
+	article_data['difficulty'] = difficulty
+	article_data.save()
 
 
 #save an article to a local file for eventual upload to S3
@@ -137,7 +155,6 @@ seed_list = ["Boat"]
 URL_ROOT = ""
 LINKS_ROOT = ""
 
-status = dict()
 archive = dict()
 last_archive_time = datetime.datetime.now()
 
@@ -148,6 +165,9 @@ q = sqs.create_queue("wikiloteca_queue")
 s3 = S3Connection()
 bucket = s3.get_bucket("nickgtyson.wikiloteca")
 
+# title -> status, difficulty, time
+database = Table("wikiloteca")
+
 init("english", seed_list)
 
 articles_processed = 0
@@ -156,13 +176,14 @@ while (articles_processed < 3):
 	words = process_article(article)
 	process_links(article)
 	difficulty = determine_difficulty(words)
+	update_processed_article_in_database(article, difficulty)
 	update_archive(article, words)	
 	articles_processed += 1
 	
 	#see if it has been long enough to backup data to S3
 	current_time = datetime.datetime.now()
 	time_since_backup = current_time - last_archive_time
-	if (time_since_backup.seconds >= 120):
+	if (time_since_backup.seconds >= 1800):
 		upload_archive()
 		last_archive_time = current_time
 	
