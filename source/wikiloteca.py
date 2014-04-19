@@ -100,11 +100,31 @@ def process_links(article_title):
 	links = [l.text for l in link_nodes]
 
 	#add links to the queue if they haven't been seen before
+	request_list = []
 	for t in links:
-		if (not database.has_item(title=t, consistent=True)):
-			add_new_title(t)
-			print "adding article to queue: " + t
-
+		request_list = request_list + [dict(title=t)]
+	
+	#returns list of dicts - each dict is one item from the database
+	present_links = database.batch_get(keys=request_list)
+	
+	with database.batch_write() as batch:
+		for r in request_list:
+			#find titles in the returned list that match requested titles
+			# if none exist, add the item to the database and queue
+			matches = [item for item in present_links if item['title'] == r['title']]
+			if len(matches) == 0:
+				add_time = str(datetime.datetime.now())
+				batch.put_item(data={
+					'title': r['title'],
+					'status': 'queued',
+					'difficulty': 0,
+					'time': add_time,
+				})
+				message = Message()
+				message.set_body(r['title'].encode('utf-8'))
+				q.write(message)
+				print "adding article to queue: " + r['title']
+			
 
 #determine text difficulty
 #======================================
@@ -167,6 +187,7 @@ bucket = s3.get_bucket("nickgtyson.wikiloteca")
 
 # title -> status, difficulty, time
 database = Table("wikiloteca")
+
 
 init("english", seed_list)
 
