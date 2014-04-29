@@ -13,6 +13,7 @@ import lxml.html
 import json
 from collections import deque
 import datetime
+from decimal import Decimal
 
 ##########################################################################
 # Functions
@@ -22,13 +23,16 @@ import datetime
 #check that the title hasn't been added already BEFORE calling this
 #========================================
 def add_new_title(title):
-	add_time = str(datetime.datetime.now())
-	database.put_item(data={
-		'title': title,
-		'status': 'queued',
-		'difficulty': 0,
-		'time': add_time,
-	})
+	if (LOCAL_TEST):
+		status[title] = (0, 0.0)
+	else:
+		add_time = str(datetime.datetime.now())
+		database.put_item(data={
+			'title': title,
+			'status': 'queued',
+			'difficulty': Decimal(0.0),
+			'time': add_time,
+		})
 	message = Message()
 	message.set_body(title.encode('utf-8'))
 	q.write(message)
@@ -88,6 +92,7 @@ def process_article(article_title):
 	for p in paragraphs:
 		content += (p + "\n\n")
 
+	#print content
 	return content
 
 
@@ -100,47 +105,63 @@ def process_links(article_title):
 	links = [l.text for l in link_nodes]
 
 	#add links to the queue if they haven't been seen before
-	request_list = []
-	for t in links:
-		request_list = request_list + [dict(title=t)]
-	
-	#returns list of dicts - each dict is one item from the database
-	present_links = database.batch_get(keys=request_list)
-	
-	with database.batch_write() as batch:
-		for r in request_list:
-			#find titles in the returned list that match requested titles
-			# if none exist, add the item to the database and queue
-			matches = [item for item in present_links if item['title'] == r['title']]
-			if len(matches) == 0:
-				add_time = str(datetime.datetime.now())
-				batch.put_item(data={
-					'title': r['title'],
-					'status': 'queued',
-					'difficulty': 0,
-					'time': add_time,
-				})
+	if(LOCAL_TEST):
+		for title in links:
+			if (not status.has_key(title)):
+				status[title] = (0, 0.0)
 				message = Message()
-				message.set_body(r['title'].encode('utf-8'))
+				message.set_body(title.encode('utf-8'))
 				q.write(message)
-				print "adding article to queue: " + r['title']
+				print "adding article to queue: " + title
+	else:
+		request_list = []
+		for t in links:
+			request_list = request_list + [dict(title=t)]
+	
+		#returns list of dicts - each dict is one item from the database
+		present_links = database.batch_get(keys=request_list)
+	
+		with database.batch_write() as batch:
+			for r in request_list:
+				#find titles in the returned list that match requested titles
+				# if none exist, add the item to the database and queue
+				matches = [item for item in present_links if item['title'] == r['title']]
+				if len(matches) == 0:
+					add_time = str(datetime.datetime.now())
+					batch.put_item(data={
+						'title': r['title'],
+						'status': 'queued',
+						'difficulty': Decimal(0.0),
+						'time': add_time,
+					})
+					message = Message()
+					message.set_body(r['title'].encode('utf-8'))
+					q.write(message)
+					print "adding article to queue: " + r['title']
 			
 
 #determine text difficulty
 #======================================
 def determine_difficulty(text):
-	print "determining difficulty"
-	return 0
+	#for now, just average word length
+	#number of non-whitespace characters / number of words
+	difficulty = len(text.strip()) / float(len(text.split()))
+	difficulty = difficulty
+	print "determining difficulty: " + str(difficulty)
+	return difficulty
 
 
 #add the article's difficulty to the database and mark it as done
 #===========================================
 def update_processed_article_in_database(article_title, difficulty):
-	#mark the article as processed
-	article_data = database.get_item(title=article_title, consistent=True)
-	article_data['status'] = 'done'
-	article_data['difficulty'] = difficulty
-	article_data.save()
+	if(LOCAL_TEST):		
+		#mark the article as processed
+		status[article_title] = (1, difficulty)
+	else:
+		article_data = database.get_item(title=article_title, consistent=True)
+		article_data['status'] = 'done'
+		article_data['difficulty'] = Decimal(difficulty).quantize(Decimal('1.0000'))
+		article_data.save()
 
 
 #save an article to a local file for eventual upload to S3
@@ -174,8 +195,10 @@ def closeAWS():
 seed_list = ["Boat"]
 URL_ROOT = ""
 LINKS_ROOT = ""
+LOCAL_TEST = False
 
 archive = dict()
+status = dict()
 last_archive_time = datetime.datetime.now()
 
 sqs = boto.sqs.connect_to_region("us-east-1")
